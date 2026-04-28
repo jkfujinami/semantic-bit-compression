@@ -8,7 +8,10 @@ from .strategies import (
     ZlibRawUtf8Strategy,
     RawTokenStrategy,
     ZlibTokenStrategy,
-    ChimeraTokenStrategy
+    ChimeraTokenStrategy,
+    BwtMtfTokenStrategy,
+    HeaderlessBwtMtfTokenStrategy,
+    ChimeraMtfTokenStrategy
 )
 
 class SemanticCompressor:
@@ -20,7 +23,10 @@ class SemanticCompressor:
             ZlibRawUtf8Strategy(),
             RawTokenStrategy(),
             ZlibTokenStrategy(),
-            ChimeraTokenStrategy()
+            ChimeraTokenStrategy(),
+            BwtMtfTokenStrategy(),
+            HeaderlessBwtMtfTokenStrategy(),
+            ChimeraMtfTokenStrategy()
         ]
         self.strat_map = {s.strategy_id: s for s in self.strategies}
 

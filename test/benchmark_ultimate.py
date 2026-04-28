@@ -9,8 +9,8 @@ from datasets import load_dataset
 from tqdm import tqdm
 
 # 親ディレクトリのモジュールを読み込めるようにする
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from semantic_compressor.strategies import pack_tokens, ChimeraTokenStrategy
+from semantic_compressor.strategies import pack_tokens, ChimeraTokenStrategy, BwtMtfTokenStrategy, HeaderlessBwtMtfTokenStrategy, ChimeraMtfTokenStrategy, BwtChimeraTokenStrategy, BwtRleZeroTokenStrategy, FastMTF, encode_leb128
+import struct as _struct
 from tokenizers import Tokenizer
 
 def benchmark_algorithm(name, stats, encode_func, data):
@@ -37,6 +37,11 @@ def main():
     tokenizer = Tokenizer.from_file(tokenizer_path)
     bits_per_id = 18
     chimera = ChimeraTokenStrategy()
+    bwt_mtf = BwtMtfTokenStrategy()
+    pure_bwt = HeaderlessBwtMtfTokenStrategy()
+    chimera_mtf = ChimeraMtfTokenStrategy()
+    bwt_chimera = BwtChimeraTokenStrategy()
+    bwt_rlez = BwtRleZeroTokenStrategy()
 
     # 圧縮器の準備 (最高・高圧縮設定)
     zstd_comp = zstd.ZstdCompressor(level=19) # Zstd高圧縮
@@ -54,6 +59,12 @@ def main():
         "LZMA (Tokens)": {"bytes": 0, "time_ms": 0},
         "Zstd (Tokens)": {"bytes": 0, "time_ms": 0},
         "Chimera (Tokens)": {"bytes": 0, "time_ms": 0},
+        "Chimera-MTF (Tokens)": {"bytes": 0, "time_ms": 0},
+        "BWT+MTF (Tokens)": {"bytes": 0, "time_ms": 0},
+        "Pure BWT+MTF (Tokens)": {"bytes": 0, "time_ms": 0},
+        "BWT+Chimera (Tokens)": {"bytes": 0, "time_ms": 0},
+        "BWT+RLE-Zero (Tokens)": {"bytes": 0, "time_ms": 0},
+        "BWT+RLEZ NoZlib (Tokens)": {"bytes": 0, "time_ms": 0},
     }
 
     # 処理時間がかかりすぎるため、先頭2000件で限界突破テストを行う
@@ -96,6 +107,64 @@ def main():
         t1 = time.perf_counter()
         stats["Chimera (Tokens)"]["bytes"] += len(chimera_bytes)
         stats["Chimera (Tokens)"]["time_ms"] += (t1 - t0) * 1000
+
+        t0 = time.perf_counter()
+        chimera_mtf_bytes = chimera_mtf.encode(text, token_ids, bits_per_id)
+        t1 = time.perf_counter()
+        stats["Chimera-MTF (Tokens)"]["bytes"] += len(chimera_mtf_bytes)
+        stats["Chimera-MTF (Tokens)"]["time_ms"] += (t1 - t0) * 1000
+
+        t0 = time.perf_counter()
+        bwt_mtf_bytes = bwt_mtf.encode(text, token_ids, bits_per_id)
+        t1 = time.perf_counter()
+        stats["BWT+MTF (Tokens)"]["bytes"] += len(bwt_mtf_bytes)
+        stats["BWT+MTF (Tokens)"]["time_ms"] += (t1 - t0) * 1000
+
+        t0 = time.perf_counter()
+        pure_bytes = pure_bwt.encode(text, token_ids, bits_per_id)
+        t1 = time.perf_counter()
+        stats["Pure BWT+MTF (Tokens)"]["bytes"] += len(pure_bytes)
+        stats["Pure BWT+MTF (Tokens)"]["time_ms"] += (t1 - t0) * 1000
+
+        t0 = time.perf_counter()
+        bwt_chimera_bytes = bwt_chimera.encode(text, token_ids, bits_per_id)
+        t1 = time.perf_counter()
+        stats["BWT+Chimera (Tokens)"]["bytes"] += len(bwt_chimera_bytes)
+        stats["BWT+Chimera (Tokens)"]["time_ms"] += (t1 - t0) * 1000
+
+        t0 = time.perf_counter()
+        bwt_rlez_bytes = bwt_rlez.encode(text, token_ids, bits_per_id)
+        t1 = time.perf_counter()
+        stats["BWT+RLE-Zero (Tokens)"]["bytes"] += len(bwt_rlez_bytes)
+        stats["BWT+RLE-Zero (Tokens)"]["time_ms"] += (t1 - t0) * 1000
+
+        # NoZlib variant: BWT + MTF + RLE-Zero + LEB128 (no Zlib)
+        t0 = time.perf_counter()
+        n = len(token_ids)
+        rotations = [token_ids[ii:] + token_ids[:ii] for ii in range(n)]
+        rotations.sort()
+        last_col = [rot[-1] for rot in rotations]
+        primary_index = rotations.index(token_ids)
+        mtf_nz = FastMTF(1 << 18, n)
+        ranks_nz = [mtf_nz.encode(t) for t in last_col]
+        symbols_nz = []
+        ii = 0
+        while ii < n:
+            if ranks_nz[ii] == 0:
+                zc = 0
+                while ii < n and ranks_nz[ii] == 0:
+                    zc += 1; ii += 1
+                while zc > 0:
+                    if zc % 2 == 1:
+                        symbols_nz.append(0); zc = (zc - 1) // 2
+                    else:
+                        symbols_nz.append(1); zc = (zc - 2) // 2
+            else:
+                symbols_nz.append(ranks_nz[ii] + 1); ii += 1
+        nz_bytes = _struct.pack('<I', primary_index) + encode_leb128(symbols_nz)
+        t1 = time.perf_counter()
+        stats["BWT+RLEZ NoZlib (Tokens)"]["bytes"] += len(nz_bytes)
+        stats["BWT+RLEZ NoZlib (Tokens)"]["time_ms"] += (t1 - t0) * 1000
 
     print("\n" + "="*70)
     print(" 🏆 ULTIMATE BENCHMARK RESULTS (Top Compressors vs Semantic)")
